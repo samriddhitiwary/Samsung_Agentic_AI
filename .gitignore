@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments and local Python selection
+.venv/
+.python-version
+
+# Local environment overrides
+.env
+
+# Local benchmark data and generated results
+data/*
+!data/.gitkeep
+results/*
+!results/.gitkeep
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

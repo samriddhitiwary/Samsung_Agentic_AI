@@ -1,0 +1,8 @@
+mteb==2.21.0
+datasets==5.0.1
+numpy==2.4.6
+tqdm==4.70.1
+bm25s==0.2.13
+sentence-transformers==5.1.2
+transformers==4.57.1
+protobuf==6.33.2
