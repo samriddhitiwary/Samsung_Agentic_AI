@@ -6,3 +6,4 @@ bm25s==0.2.13
 sentence-transformers==5.1.2
 transformers==4.57.1
 protobuf==6.33.2
+onnxruntime==1.30.0
