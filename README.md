@@ -122,3 +122,101 @@ Evaluator sanity checks passed for both baselines:
 - exactly one positive qrel per query
 - MRR@10 equals average reciprocal rank of the positive document within top 10
 - HitRate@10 equals the fraction of queries whose positive document appears in the top 10
+
+## Run API
+
+Start the existing local Jina Code 1.5B GGUF embedding server first:
+
+```powershell
+& 'C:\Users\samri\AppData\Local\Microsoft\WinGet\Packages\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\llama-server.exe' `
+  --embedding `
+  --model 'data\cache\model_files\jina-code-embeddings-1.5b-Q8_0.gguf' `
+  --host 127.0.0.1 `
+  --port 8081 `
+  --ctx-size 2048 `
+  --ubatch-size 512 `
+  --pooling last `
+  --parallel 1 `
+  --device none `
+  --gpu-layers 0 `
+  --no-op-offload
+```
+
+Run the local FastAPI app:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+```
+
+Health check:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
+```
+
+## Register repository
+
+```powershell
+$body = @{
+  repo_path = "data/versioning/real_repos/itsdangerous"
+  repo_id = "itsdangerous_demo"
+  commit = "2f69e841d2a979c616a55b226e444694f5d9c962"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/register -ContentType "application/json" -Body $body
+```
+
+## Search commit
+
+```powershell
+$body = @{
+  repo_id = "itsdangerous_demo"
+  query = "FIPS SHA1 digest method"
+  commit = "2f69e841d2a979c616a55b226e444694f5d9c962"
+  top_k = 5
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/search -ContentType "application/json" -Body $body
+```
+
+## Incrementally update
+
+```powershell
+$body = @{
+  commit = "31f46a3469dbfb2ecf83dd0c4297c1efc508fcca"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/itsdangerous_demo/update -ContentType "application/json" -Body $body
+```
+
+## Search across history
+
+```powershell
+$body = @{
+  repo_id = "itsdangerous_demo"
+  query = "serializer signing"
+  top_k = 5
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/search/evolution -ContentType "application/json" -Body $body
+```
+
+## View metrics
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/metrics/summary
+```
+
+## Demo CLI
+
+The CLI demonstrates registration, version-specific search, incremental update, evolutionary search, and symbol evolution:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\demo_system.py --seed-cache
+```
+
+API verification without a browser:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_api.py
+```

@@ -7,3 +7,6 @@ sentence-transformers==5.1.2
 transformers==4.57.1
 protobuf==6.33.2
 onnxruntime==1.30.0
+fastapi==0.141.1
+uvicorn==0.53.0
+httpx==0.28.1
