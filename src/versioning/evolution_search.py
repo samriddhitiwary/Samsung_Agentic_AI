@@ -206,6 +206,7 @@ def search_across_versions(
     end_commit: str | None = None,
     top_k: int = 5,
     raw: bool = False,
+    include_evolution_context: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     metadata = load_evolution_metadata(evolution_dir)
@@ -220,7 +221,13 @@ def search_across_versions(
     if raw:
         results = attach_text_to_raw(raw_results, metadata)
     else:
-        results = group_results_by_content(raw_results, metadata, commits, top_k=top_k)
+        results = group_results_by_content(
+            raw_results,
+            metadata,
+            commits,
+            top_k=top_k,
+            include_evolution_context=include_evolution_context,
+        )
     grouping_time = time.perf_counter() - grouping_started
     return {
         "repo": metadata["repo"],
@@ -240,6 +247,7 @@ def group_results_by_content(
     metadata: dict[str, Any],
     commits: list[str],
     top_k: int,
+    include_evolution_context: bool = False,
 ) -> list[dict[str, Any]]:
     best_by_content: dict[str, dict[str, Any]] = {}
     for result in raw_results:
@@ -256,17 +264,23 @@ def group_results_by_content(
             if occ["commit"] in selected_commits
         ]
         state = metadata["content_states"][content_id]
-        grouped.append(
-            {
-                "content_id": content_id,
-                "score": best["score"],
-                "best_match": best,
-                "preview": state["preview"],
-                "text": state["text"],
-                "occurrences": sorted(occurrences, key=lambda item: (commits.index(item["commit"]), item["path"], item["symbol"])),
-                "lineage": lineage_for_content(metadata, content_id),
-            }
-        )
+        item = {
+            "content_id": content_id,
+            "score": best["score"],
+            "best_match": best,
+            "preview": state["preview"],
+            "text": state["text"],
+            "occurrences": sorted(occurrences, key=lambda item: (commits.index(item["commit"]), item["path"], item["symbol"])),
+            "lineage": lineage_for_content(metadata, content_id),
+        }
+        if include_evolution_context:
+            item["evolution_context"] = evolution_context_for_content(
+                metadata=metadata,
+                content_id=content_id,
+                occurrence_key=best.get("occurrence_key") or occurrence_key_for_chunk(best),
+                selected_commits=commits,
+            )
+        grouped.append(item)
     grouped.sort(key=lambda item: (-item["score"], item["content_id"]))
     return grouped[:top_k]
 
@@ -330,6 +344,90 @@ def lineage_for_content(metadata: dict[str, Any], content_id: str) -> list[dict[
     return values
 
 
+def evolution_context_for_content(
+    *,
+    metadata: dict[str, Any],
+    content_id: str,
+    occurrence_key: str | None = None,
+    selected_commits: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return deterministic state-level context for a grouped semantic result.
+
+    This is metadata only: it does not influence vector scores or ranking. It is
+    designed so later chunk-level reuse can consume the same stable content IDs,
+    occurrence keys, commits, and transition summaries.
+    """
+
+    selected = set(selected_commits or metadata["commit_graph"]["order"])
+    commit_position = {commit: index for index, commit in enumerate(metadata["commit_graph"]["order"])}
+    chain = None
+    if occurrence_key:
+        chain = metadata["chains"].get(occurrence_key)
+    if chain is None:
+        chain = next(
+            (
+                candidate
+                for candidate in metadata["chains"].values()
+                if any(state.get("content_id") == content_id for state in candidate.get("states", []))
+            ),
+            None,
+        )
+    if chain is None:
+        return {
+            "content_id": content_id,
+            "occurrence_key": occurrence_key,
+            "first_seen_commit": None,
+            "last_seen_commit": None,
+            "occurrence_commits": [],
+            "predecessor_content_id": None,
+            "successor_content_id": None,
+            "introduced_by_transition": None,
+            "removed_by_transition": None,
+            "lines_added": 0,
+            "lines_removed": 0,
+        }
+
+    present_states = [
+        state
+        for state in chain.get("states", [])
+        if state.get("content_id") == content_id and state.get("commit") in selected
+    ]
+    present_states.sort(key=lambda state: commit_position[state["commit"]])
+    occurrence_commits = [state["commit"] for state in present_states]
+    intro_transitions = [
+        transition
+        for transition in chain.get("transitions", [])
+        if transition.get("new_content_id") == content_id
+        and transition.get("old_content_id") != content_id
+        and transition.get("to_commit") in selected
+    ]
+    exit_transitions = [
+        transition
+        for transition in chain.get("transitions", [])
+        if transition.get("old_content_id") == content_id
+        and transition.get("new_content_id") != content_id
+        and transition.get("from_commit") in selected
+    ]
+    intro_transitions.sort(key=lambda transition: commit_position.get(transition.get("to_commit"), -1))
+    exit_transitions.sort(key=lambda transition: commit_position.get(transition.get("from_commit"), -1))
+    first_intro = intro_transitions[0] if intro_transitions else None
+    first_exit = exit_transitions[0] if exit_transitions else None
+
+    return {
+        "content_id": content_id,
+        "occurrence_key": chain["occurrence_key"],
+        "first_seen_commit": occurrence_commits[0] if occurrence_commits else None,
+        "last_seen_commit": occurrence_commits[-1] if occurrence_commits else None,
+        "occurrence_commits": occurrence_commits,
+        "predecessor_content_id": first_intro.get("old_content_id") if first_intro else None,
+        "successor_content_id": first_exit.get("new_content_id") if first_exit else None,
+        "introduced_by_transition": first_intro.get("transition") if first_intro else None,
+        "removed_by_transition": first_exit.get("transition") if first_exit else None,
+        "lines_added": first_intro.get("lines_added", 0) if first_intro else 0,
+        "lines_removed": first_intro.get("lines_removed", 0) if first_intro else 0,
+    }
+
+
 def occurrence_key_for_chunk(chunk: dict[str, Any]) -> str:
     return f"{chunk['path']}:{chunk['chunk_type']}:{chunk['symbol']}"
 
@@ -341,4 +439,3 @@ def preview(text: str, limit: int = 240) -> str:
 
 def line_count(text: str) -> int:
     return len(text.splitlines())
-

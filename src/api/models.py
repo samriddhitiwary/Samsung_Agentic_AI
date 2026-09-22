@@ -26,4 +26,7 @@ class EvolutionSearchRequest(BaseModel):
     start_commit: str | None = None
     end_commit: str | None = None
     top_k: int = Field(default=10, ge=1, le=100)
-
+    include_evolution_context: bool = Field(
+        default=False,
+        description="Attach deterministic state-level evolution metadata to grouped results.",
+    )

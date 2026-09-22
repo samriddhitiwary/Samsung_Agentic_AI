@@ -42,6 +42,7 @@ def search_evolution(request: EvolutionSearchRequest) -> dict:
         start_commit=request.start_commit,
         end_commit=request.end_commit,
         top_k=request.top_k,
+        include_evolution_context=request.include_evolution_context,
     )
 
 
@@ -53,4 +54,3 @@ def symbol_evolution(repo_id: str, symbol: str, path: str | None = None) -> dict
 @app.get("/metrics/summary")
 def metrics_summary() -> dict:
     return service.metrics_summary()
-

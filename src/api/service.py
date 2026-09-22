@@ -261,6 +261,7 @@ class ApiService:
         start_commit: str | None,
         end_commit: str | None,
         top_k: int,
+        include_evolution_context: bool = False,
     ) -> dict[str, Any]:
         self._require_server()
         record = self._repo_record(repo_id)
@@ -277,6 +278,7 @@ class ApiService:
                 end_commit=resolved_end,
                 top_k=top_k,
                 raw=False,
+                include_evolution_context=include_evolution_context,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -298,6 +300,7 @@ class ApiService:
                     "last_seen_commit": commits[-1] if commits else None,
                     "changed_state_count": len({occ["version_id"] for occ in occurrences}),
                     "lineage": item.get("lineage", []),
+                    "evolution_context": item.get("evolution_context"),
                 }
             )
         return {

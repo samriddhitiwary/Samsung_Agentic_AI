@@ -72,10 +72,22 @@ def main() -> int:
         start_commit=None,
         end_commit=None,
         top_k=3,
+        include_evolution_context=True,
     )
     print(json.dumps(evo, indent=2, sort_keys=True))
 
-    print("\n6) Symbol evolution chain")
+    print("\n6) Focused evolutionary state query")
+    focused = service.evolution_search(
+        repo_id=args.repo_id,
+        query="HMAC algorithm using lazy SHA1 for FIPS builds",
+        start_commit=None,
+        end_commit=None,
+        top_k=3,
+        include_evolution_context=True,
+    )
+    print(json.dumps(focused, indent=2, sort_keys=True))
+
+    print("\n7) Symbol evolution chain")
     chain = service.symbol_evolution(
         repo_id=args.repo_id,
         symbol="HMACAlgorithm",
@@ -100,4 +112,3 @@ def seed_cache(repo_id: str) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

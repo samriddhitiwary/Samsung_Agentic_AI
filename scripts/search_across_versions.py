@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-commit", default=None)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--raw", action="store_true")
+    parser.add_argument("--include-evolution-context", action="store_true")
     parser.add_argument("--server-url", default="http://127.0.0.1:8081")
     parser.add_argument("--json-output", default=None)
     return parser.parse_args()
@@ -58,6 +59,7 @@ def main() -> int:
         end_commit=args.end_commit,
         top_k=args.top_k,
         raw=args.raw,
+        include_evolution_context=args.include_evolution_context,
     )
     payload["query"] = args.query
     if args.json_output:
@@ -70,4 +72,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
