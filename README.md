@@ -220,3 +220,57 @@ API verification without a browser:
 ```powershell
 .\.venv\Scripts\python.exe scripts\verify_api.py
 ```
+
+## Samsung P0 Submission
+
+The frozen P0 AppsRetrieval result is submitted through Samsung's required MTEB flow:
+
+- task: `AppsRetrieval`
+- evaluation split: `test`
+- wrapper interface: `mteb.models.abs_encoder.AbsEncoder`
+- output file: `submission/appsretrieval_results.json`
+
+Generate the official MTEB JSON:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_samsung_mteb_submission.py --require-cache
+```
+
+The runner uses:
+
+```python
+task = mteb.get_task("AppsRetrieval")
+result = mteb.evaluate(model, [task], encode_kwargs={"batch_size": 4})
+task_result = list(result.task_results)[0]
+json.dump(task_result.to_dict(), f, indent=2)
+```
+
+If the frozen embedding caches are unavailable and you want to regenerate embeddings, start the local llama.cpp embedding server first:
+
+```powershell
+& $env:JCR_LLAMA_CPP_EXECUTABLE --embedding --model data\cache\model_files\jina-code-embeddings-1.5b-Q8_0.gguf --host 127.0.0.1 --port 8081 --ctx-size 2048 --ubatch-size 512 --pooling last --parallel 1 --device none --gpu-layers 0 --no-op-offload
+```
+
+Expected local behavior with completed caches:
+
+- processes all 3,765 test queries and 8,765 official corpus candidates
+- reuses `data/cache/jina_code_1.5b_full_1024/`
+- finishes in minutes for evaluation/search because embeddings are cached
+- writes `submission/appsretrieval_results.json`
+- writes `submission/appsretrieval_validation.json` for local sanity checks
+
+GitHub Release file list:
+
+- `appsretrieval_results.json`
+
+CSV note: Official guideline provides explicit MTEB JSON generation/upload instructions but does not provide an explicit CSV schema.
+
+Hands-on evaluation checklist:
+
+- PPT
+- demo video
+- GitHub repository
+- runnable instructions
+- real query responses
+- runtime/speed demonstration
+- P1 / Bonus version-aware retrieval demonstration
