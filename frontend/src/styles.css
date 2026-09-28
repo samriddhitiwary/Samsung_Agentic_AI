@@ -24,6 +24,9 @@ body {
   .primary {
     @apply inline-flex items-center gap-2 rounded-xl bg-samsung px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
   }
+  .secondary {
+    @apply inline-flex items-center gap-2 rounded-xl border border-line bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-samsung/60 hover:text-white;
+  }
   .chip {
     @apply rounded-full border border-line bg-white/[0.03] px-3 py-1 text-xs text-slate-300 transition hover:border-samsung/60 hover:text-white;
   }
@@ -37,4 +40,3 @@ body {
     @apply max-h-80 overflow-auto rounded-lg border border-line bg-black/40 p-3 font-mono text-xs leading-5 text-slate-200;
   }
 }
-
