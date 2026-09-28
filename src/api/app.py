@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.models import EvolutionSearchRequest, RegisterRepoRequest, SearchRequest, UpdateRepoRequest
+from src.api.models import EvolutionSearchRequest, QueryRequest, RegisterRepoRequest, SearchRequest, UpdateRepoRequest
 from src.api.service import ApiService
 
 
@@ -12,6 +13,14 @@ app = FastAPI(
     description="Thin API over verified P0 retrieval metrics and P1 version-aware code retrieval.",
 )
 service = ApiService()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
@@ -32,6 +41,11 @@ def update_repo(repo_id: str, request: UpdateRepoRequest) -> dict:
 @app.post("/search")
 def search(request: SearchRequest) -> dict:
     return service.search(repo_id=request.repo_id, query=request.query, commit=request.commit, top_k=request.top_k)
+
+
+@app.post("/query")
+def query(request: QueryRequest) -> dict:
+    return service.query(repo_id=request.repo_id, query=request.query, commit=request.commit, top_k=request.top_k)
 
 
 @app.post("/search/evolution")

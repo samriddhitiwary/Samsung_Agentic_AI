@@ -67,6 +67,12 @@ def chunk_source_file(
         chunks = _chunk_python(repo=repo, commit=commit, path=path, language=language, text=text, config=config)
         if chunks:
             return chunks
+    if language in {"javascript", "javascriptreact", "typescript", "typescriptreact"}:
+        from src.structure.js_parser import parse_javascript_entities
+
+        chunks = parse_javascript_entities(repo=repo, commit=commit, path=path, language=language, text=text)
+        if chunks:
+            return chunks
     return _chunk_fallback(repo=repo, commit=commit, path=path, language=language, text=text, config=config)
 
 
@@ -332,4 +338,3 @@ def _leading_import_block(tree: ast.Module) -> tuple[int, int] | None:
 
 def _end_lineno(node: ast.AST) -> int:
     return int(getattr(node, "end_lineno", getattr(node, "lineno", 1)))
-

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,10 @@ import requests
 from fastapi import HTTPException
 from transformers import AutoTokenizer
 
+from src.agentic.controller import run_agentic_query
 from src.retrieval.jina_code import QUERY_INSTRUCTION
 from src.retrieval.jina_gguf import truncate_with_tokenizer
+from src.structure.graph import build_structural_graph, load_structural_graph, structural_graph_output_path
 from src.versioning.chunk_manifest import (
     build_chunk_manifest,
     chunk_manifest_output_path,
@@ -53,6 +56,12 @@ class ApiService:
         self.embedding_config = EmbeddingConfig()
         self.artifact_root = PROJECT_ROOT / "data/api/repos"
         self._tokenizer: AutoTokenizer | None = None
+        self._http = requests.Session()
+        self._query_embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._query_embedding_cache_limit = int(os.environ.get("QUERY_EMBEDDING_CACHE_SIZE", "128"))
+        self._index_cache: dict[tuple[str, str], VersionedVectorIndex] = {}
+        self._chunk_manifest_cache: dict[str, dict[str, Any]] = {}
+        self._graph_cache: dict[str, dict[str, Any]] = {}
 
     def health(self) -> dict[str, Any]:
         registry = self._load_registry()
@@ -113,6 +122,7 @@ class ApiService:
             chunk_manifest_paths=[chunk_path],
             output_dir=paths["evolution"],
         )
+        graph_path, graph = self._build_or_load_structural_graph(resolved_repo_id, resolved_commit, chunk_path, paths)
 
         registry = self._load_registry()
         registry["repos"][resolved_repo_id] = {
@@ -123,6 +133,7 @@ class ApiService:
             "artifact_root": self._rel(paths["root"]),
             "manifest_paths": {resolved_commit: self._rel(manifest_path)},
             "chunk_manifest_paths": {resolved_commit: self._rel(chunk_path)},
+            "structural_graph_paths": {resolved_commit: self._rel(graph_path)},
             "created_at": datetime.now(UTC).isoformat(),
             "updated_at": datetime.now(UTC).isoformat(),
         }
@@ -133,6 +144,10 @@ class ApiService:
             "commit": resolved_commit,
             "source_files": len(file_manifest.get("files", {})),
             "chunks": len(chunk_manifest.get("chunks", {})),
+            "symbols": graph["stats"]["symbols"],
+            "call_edges": graph["stats"]["call_edges"],
+            "reference_edges": graph["stats"]["reference_edges"],
+            "loc": self._count_loc(chunk_manifest),
             "reused_embeddings": embedding_report["reused_embeddings"],
             "newly_generated_embeddings": embedding_report["newly_generated_embeddings"],
             "index": {
@@ -140,6 +155,15 @@ class ApiService:
                 "active_occurrences": index_report["active_occurrences"],
             },
             "evolution_chains": evolution["metrics"]["evolution_chains"],
+            "indexing_stages": {
+                "git_file_scan_seconds": file_manifest.get("stats", {}).get("scan_time_seconds"),
+                "chunk_generation_and_js_parse_seconds": chunk_manifest.get("stats", {}).get("build_time_seconds"),
+                "structural_graph_seconds": graph.get("stats", {}).get("build_time_seconds"),
+                "embedding_seconds": embedding_report.get("runtime", {}).get("embedding_seconds"),
+                "embedding_cache_lookup_seconds": embedding_report.get("runtime", {}).get("cache_lookup_seconds"),
+                "vector_index_persistence_seconds": index_report.get("index_build_time_seconds"),
+                "total_seconds": time.perf_counter() - started,
+            },
             "indexing_runtime_seconds": time.perf_counter() - started,
         }
 
@@ -186,6 +210,7 @@ class ApiService:
             embedding_cache_dir=paths["embedding_cache"],
             embedding_config=self.embedding_config,
         )
+        graph_path, graph = self._build_or_load_structural_graph(repo_id, new_commit, chunk_path, paths)
 
         commits = list(repo_record["commits"])
         if new_commit not in commits:
@@ -194,6 +219,7 @@ class ApiService:
         repo_record["active_commit"] = new_commit
         repo_record["manifest_paths"][new_commit] = self._rel(manifest_path)
         repo_record["chunk_manifest_paths"][new_commit] = self._rel(chunk_path)
+        repo_record.setdefault("structural_graph_paths", {})[new_commit] = self._rel(graph_path)
         repo_record["updated_at"] = datetime.now(UTC).isoformat()
         self._write_repo_record(repo_id, repo_record)
 
@@ -218,6 +244,18 @@ class ApiService:
             "vectors_removed_tombstoned": index_report["vectors_tombstoned"],
             "active_vectors": index_report["active_vectors_after_update"],
             "active_occurrences": index_report["active_occurrences_after_update"],
+            "symbols": graph["stats"]["symbols"],
+            "call_edges": graph["stats"]["call_edges"],
+            "reference_edges": graph["stats"]["reference_edges"],
+            "indexing_stages": {
+                "git_file_scan_seconds": file_manifest.get("stats", {}).get("scan_time_seconds"),
+                "chunk_generation_and_js_parse_seconds": chunk_manifest.get("stats", {}).get("build_time_seconds"),
+                "structural_graph_seconds": graph.get("stats", {}).get("build_time_seconds"),
+                "embedding_seconds": embedding_report.get("runtime", {}).get("embedding_seconds"),
+                "embedding_cache_lookup_seconds": embedding_report.get("runtime", {}).get("cache_lookup_seconds"),
+                "vector_index_update_seconds": index_report.get("update_time_seconds"),
+                "total_seconds": time.perf_counter() - started,
+            },
             "update_runtime_seconds": time.perf_counter() - started,
         }
 
@@ -229,11 +267,11 @@ class ApiService:
             raise HTTPException(status_code=404, detail=f"Commit is not indexed for repo '{repo_id}': {resolved_commit}")
         paths = self._paths(repo_id)
         try:
-            index = VersionedVectorIndex.load(paths["index"], self.embedding_config)
+            index = self._load_index(repo_id, resolved_commit, paths["index"])
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"Could not load persisted index: {exc}") from exc
         metadata = load_evolution_metadata(paths["evolution"])
-        vector = self._embed_query(query)
+        vector, _ = self._embed_query_profile(query)
         raw = index.search(query_embedding=vector, commit=resolved_commit, top_k=top_k)
         results = []
         for rank, item in enumerate(raw, start=1):
@@ -252,6 +290,31 @@ class ApiService:
                 }
             )
         return {"repo": repo_id, "commit": resolved_commit, "query": query, "results": results}
+
+    def query(self, *, repo_id: str, query: str, commit: str | None, top_k: int) -> dict[str, Any]:
+        self._require_server()
+        record = self._repo_record(repo_id)
+        resolved_commit = self._resolve_commit(Path(record["repo_path"]), commit or record.get("active_commit") or "HEAD")
+        if resolved_commit not in record["commits"]:
+            raise HTTPException(status_code=404, detail=f"Commit is not indexed for repo '{repo_id}': {resolved_commit}")
+        chunk_path = self._abs(record["chunk_manifest_paths"][resolved_commit])
+        chunk_manifest = self._load_chunk_manifest_cached(chunk_path)
+        graph = self._load_graph_for_record(record, resolved_commit)
+
+        def semantic_search(search_query: str, search_commit: str, broad_top_k: int) -> tuple[list[dict[str, Any]], dict[str, float | str | bool | None]]:
+            return self._semantic_search_profile(repo_id=repo_id, query=search_query, commit=search_commit, top_k=broad_top_k)
+
+        payload = run_agentic_query(
+            repo_id=repo_id,
+            commit=resolved_commit,
+            query=query,
+            top_k=top_k,
+            chunk_manifest_path=chunk_path,
+            chunk_manifest=chunk_manifest,
+            graph=graph,
+            semantic_search=semantic_search,
+        )
+        return payload
 
     def evolution_search(
         self,
@@ -377,6 +440,19 @@ class ApiService:
         }
 
     def _embed_query(self, query: str) -> np.ndarray:
+        vector, _ = self._embed_query_profile(query)
+        return vector
+
+    def _embed_query_profile(self, query: str) -> tuple[np.ndarray, dict[str, Any]]:
+        started = time.perf_counter()
+        cache_key = self._query_cache_key(query)
+        cached = self._query_embedding_cache.get(cache_key)
+        if cached is not None:
+            self._query_embedding_cache.move_to_end(cache_key)
+            return cached.copy(), {
+                "query_embedding_ms": (time.perf_counter() - started) * 1000.0,
+                "query_embedding_cache": "hit",
+            }
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self.embedding_config.model_name)
         prompt = truncate_with_tokenizer(
@@ -385,13 +461,70 @@ class ApiService:
             instruction=QUERY_INSTRUCTION,
             max_length=self.embedding_config.max_sequence_length,
         )
-        return _embed_http(
-            texts=[prompt],
-            server_url=self.server_url,
-            batch_size=1,
-            normalize=True,
-            desc="api query embedding",
-        )[0]
+        endpoint = self.server_url.rstrip("/") + "/embedding"
+        response = self._http.post(endpoint, json={"content": [prompt]}, timeout=600)
+        response.raise_for_status()
+        from src.retrieval.jina_gguf import parse_embedding_response
+
+        result = parse_embedding_response(response.json()).astype(np.float32)
+        norms = np.linalg.norm(result, axis=1, keepdims=True)
+        result = result / np.maximum(norms, 1e-12)
+        if result.shape[1] != self.embedding_config.embedding_dimension:
+            raise HTTPException(status_code=500, detail=f"Embedding dimension mismatch: {result.shape}")
+        if not np.isfinite(result).all():
+            raise HTTPException(status_code=500, detail="Embedding response contains non-finite values")
+        vector = result[0]
+        self._query_embedding_cache[cache_key] = vector.copy()
+        self._query_embedding_cache.move_to_end(cache_key)
+        while len(self._query_embedding_cache) > self._query_embedding_cache_limit:
+            self._query_embedding_cache.popitem(last=False)
+        return vector, {
+            "query_embedding_ms": (time.perf_counter() - started) * 1000.0,
+            "query_embedding_cache": "miss",
+        }
+
+    def _semantic_search_profile(
+        self,
+        *,
+        repo_id: str,
+        query: str,
+        commit: str,
+        top_k: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, float | str | bool | None]]:
+        started_total = time.perf_counter()
+        paths = self._paths(repo_id)
+        index_started = time.perf_counter()
+        try:
+            index = self._load_index(repo_id, commit, paths["index"])
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Could not load persisted index: {exc}") from exc
+        index_ms = (time.perf_counter() - index_started) * 1000.0
+
+        vector, embed_profile = self._embed_query_profile(query)
+        search_started = time.perf_counter()
+        raw = index.search(query_embedding=vector, commit=commit, top_k=top_k)
+        search_ms = (time.perf_counter() - search_started) * 1000.0
+        results = [
+            {
+                "rank": rank,
+                "score": item["score"],
+                "path": item["path"],
+                "symbol": item["symbol"],
+                "chunk_type": item["chunk_type"],
+                "commit": commit,
+                "content_id": item["content_id"],
+                "version_id": item["version_id"],
+            }
+            for rank, item in enumerate(raw, start=1)
+        ]
+        total_ms = (time.perf_counter() - started_total) * 1000.0
+        return results, {
+            "semantic_search_ms": total_ms,
+            "query_embedding_ms": embed_profile["query_embedding_ms"],
+            "query_embedding_cache": embed_profile["query_embedding_cache"],
+            "vector_index_access_ms": index_ms,
+            "vector_search_ms": search_ms,
+        }
 
     def _build_or_load_manifest(self, repo: Path, repo_id: str, commit: str, paths: dict[str, Path]) -> tuple[Path, dict[str, Any]]:
         manifest_path = manifest_output_path(paths["manifests"], repo_id, commit)
@@ -422,6 +555,67 @@ class ApiService:
         if not chunk_manifest.get("chunks"):
             raise HTTPException(status_code=400, detail="No indexable code chunks were produced.")
         return chunk_path, chunk_manifest
+
+    def _build_or_load_structural_graph(
+        self,
+        repo_id: str,
+        commit: str,
+        chunk_path: Path,
+        paths: dict[str, Path],
+    ) -> tuple[Path, dict[str, Any]]:
+        graph_path = structural_graph_output_path(paths["graphs"], repo_id, commit)
+        if graph_path.exists():
+            return graph_path, self._load_graph(graph_path)
+        graph = build_structural_graph(chunk_manifest_path=chunk_path, output_dir=paths["graphs"])
+        self._graph_cache[str(graph_path.resolve())] = graph
+        return graph_path, graph
+
+    def _load_graph_for_record(self, record: dict[str, Any], commit: str) -> dict[str, Any] | None:
+        graph_rel = record.get("structural_graph_paths", {}).get(commit)
+        if graph_rel:
+            path = self._abs(graph_rel)
+            if path.exists():
+                return self._load_graph(path)
+        fallback = structural_graph_output_path(self._paths(record["repo_id"])["graphs"], record["repo_id"], commit)
+        if fallback.exists():
+            return self._load_graph(fallback)
+        return None
+
+    def _load_graph(self, path: Path) -> dict[str, Any]:
+        key = str(path.resolve())
+        graph = self._graph_cache.get(key)
+        if graph is None:
+            graph = load_structural_graph(path)
+            self._graph_cache[key] = graph
+        return graph
+
+    def _load_chunk_manifest_cached(self, path: Path) -> dict[str, Any]:
+        key = str(path.resolve())
+        manifest = self._chunk_manifest_cache.get(key)
+        if manifest is None:
+            manifest = load_chunk_manifest(path)
+            self._chunk_manifest_cache[key] = manifest
+        return manifest
+
+    def _load_index(self, repo_id: str, commit: str, index_dir: Path) -> VersionedVectorIndex:
+        key = (repo_id, commit)
+        index = self._index_cache.get(key)
+        if index is None:
+            index = VersionedVectorIndex.load(index_dir, self.embedding_config)
+            self._index_cache[key] = index
+        return index
+
+    def _query_cache_key(self, query: str) -> str:
+        normalized = " ".join(query.strip().split()).lower()
+        return json.dumps(
+            {
+                "query": normalized,
+                "model": self.embedding_config.fingerprint(),
+                "prompt_version": self.embedding_config.prompt_version,
+                "instruction": QUERY_INSTRUCTION,
+            },
+            sort_keys=True,
+        )
 
     def _validate_repo_path(self, repo_path: str) -> Path:
         repo = Path(repo_path)
@@ -456,6 +650,7 @@ class ApiService:
             "embedding_cache": root / "embedding_cache",
             "index": root / "index",
             "evolution": root / "evolution",
+            "graphs": root / "graphs",
         }
 
     def _repo_record(self, repo_id: str) -> dict[str, Any]:
@@ -506,3 +701,10 @@ class ApiService:
     @staticmethod
     def _safe(value: str) -> str:
         return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value).strip("_") or "repo"
+
+    @staticmethod
+    def _count_loc(chunk_manifest: dict[str, Any]) -> int:
+        by_path: dict[str, int] = {}
+        for chunk in chunk_manifest.get("chunks", {}).values():
+            by_path[chunk["path"]] = max(by_path.get(chunk["path"], 0), int(chunk.get("end_line", 0)))
+        return sum(by_path.values())

@@ -20,6 +20,13 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100)
 
 
+class QueryRequest(BaseModel):
+    repo_id: str
+    query: str
+    commit: str | None = Field(default=None, description="Optional indexed commit/ref. Defaults to active commit.")
+    top_k: int = Field(default=10, ge=1, le=50)
+
+
 class EvolutionSearchRequest(BaseModel):
     repo_id: str
     query: str

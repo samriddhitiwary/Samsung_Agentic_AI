@@ -2,6 +2,116 @@
 
 This project targets the strongest legitimate retrieval accuracy on the official CoIR `AppsRetrieval` benchmark for Samsung PRISM Gen AI Hackathon 3.0 Theme 1. The primary screening metrics are **NDCG@10** and **MRR@10**.
 
+## Hands-on Agentic Code Intelligence API and UI
+
+The repository also includes a CPU-local hands-on demo layer for arbitrary judge queries over Git repositories. This layer does not modify the frozen official AppsRetrieval P0 artifacts.
+
+Capabilities:
+
+- syntax-aware JavaScript/TypeScript structural indexing with Tree-sitter
+- exact `path:start-end` source locations for structural chunks
+- persistent structural graph with symbol, reference, import, and call evidence
+- deterministic query routing: `semantic`, `usage`, `structural`, `mixed`
+- unified `POST /query` endpoint returning snippets, line ranges, timings, and a judge-safe action trace
+- repository registration and incremental update endpoints backed by the existing P1 infrastructure
+- React/Vite/TypeScript/Tailwind frontend focused on arbitrary natural-language queries
+
+Install/update dependencies:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Start the backend:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+```
+
+Register a local Git repository:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/repos/register `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body '{"repo_path":"C:\\path\\to\\repo","repo_id":"sample_repo","commit":"HEAD"}'
+```
+
+Query arbitrary code:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/query `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body '{"repo_id":"sample_repo","query":"Where is openBluetoothSettings used?","top_k":10}'
+```
+
+Start the frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`.
+
+Optional helper:
+
+```powershell
+.\scripts\start_demo.ps1
+```
+
+Run internal JavaScript hands-on validation:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_hands_on_js.py
+```
+
+This creates a temporary engineering smoke-test repository under `data/api/js_smoke_repo` and writes internal metrics to `data/api/js_hands_on_validation.json`. These are not official Samsung P0 metrics.
+
+Samsung sample repository note: no official sample JavaScript repository or problem-statement sample repo is currently available locally in this workspace. The validation repo is therefore clearly labeled as a temporary engineering smoke test.
+
+Optional demo warm-up, clearly separate from evaluation:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\warmup_demo.py --repo-id js_hands_on_smoke
+```
+
+Generic hands-on latency/quality benchmark for a future Samsung sample repository:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark_hands_on_repo.py `
+  --repo-path C:\path\to\samsung-sample-js-repo `
+  --repo-id samsung_sample `
+  --commit HEAD `
+  --queries-file C:\path\to\source_verified_queries.json `
+  --output data\api\samsung_sample_hands_on_latency.json
+```
+
+Query-set JSON format:
+
+```json
+[
+  {
+    "query": "Where is openBluetoothSettings used?",
+    "type": "usage",
+    "expected": [
+      {
+        "path": "src/settings.js",
+        "symbol": "openBluetoothSettings",
+        "start_line": 3,
+        "end_line": 5
+      }
+    ]
+  }
+]
+```
+
+Expected answers must be manually/source verified. The benchmark script never invents expected answers.
+
 ## Reproducible benchmark definition
 
 - Python: 3.11 (environment created with 3.11.9)

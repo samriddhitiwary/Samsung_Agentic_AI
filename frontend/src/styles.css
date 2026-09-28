@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #080b11;
+}
+
+@layer components {
+  .nav-item {
+    @apply flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-400 transition hover:bg-white/5 hover:text-slate-100;
+  }
+  .nav-active {
+    @apply bg-samsung/15 text-slate-100 ring-1 ring-samsung/30;
+  }
+  .input {
+    @apply w-full rounded-xl border border-line bg-[#090e15] px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-samsung/70 focus:ring-2 focus:ring-samsung/15;
+  }
+  .primary {
+    @apply inline-flex items-center gap-2 rounded-xl bg-samsung px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
+  }
+  .chip {
+    @apply rounded-full border border-line bg-white/[0.03] px-3 py-1 text-xs text-slate-300 transition hover:border-samsung/60 hover:text-white;
+  }
+  .rank {
+    @apply rounded-md bg-samsung/15 px-2 py-1 font-mono text-xs text-blue-200;
+  }
+  .badge {
+    @apply rounded-md border border-line px-2 py-1 text-xs capitalize text-slate-300;
+  }
+  .code {
+    @apply max-h-80 overflow-auto rounded-lg border border-line bg-black/40 p-3 font-mono text-xs leading-5 text-slate-200;
+  }
+}
+
