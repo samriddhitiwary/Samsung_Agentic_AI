@@ -125,16 +125,27 @@ class ApiService:
         graph_path, graph = self._build_or_load_structural_graph(resolved_repo_id, resolved_commit, chunk_path, paths)
 
         registry = self._load_registry()
-        registry["repos"][resolved_repo_id] = {
+        existing_record = registry.get("repos", {}).get(resolved_repo_id, {})
+        existing_commits = list(existing_record.get("commits", []))
+        if resolved_commit not in existing_commits:
+            existing_commits.append(resolved_commit)
+        manifest_paths = dict(existing_record.get("manifest_paths", {}))
+        chunk_manifest_paths = dict(existing_record.get("chunk_manifest_paths", {}))
+        structural_graph_paths = dict(existing_record.get("structural_graph_paths", {}))
+        manifest_paths[resolved_commit] = self._rel(manifest_path)
+        chunk_manifest_paths[resolved_commit] = self._rel(chunk_path)
+        structural_graph_paths[resolved_commit] = self._rel(graph_path)
+
+        registry.setdefault("repos", {})[resolved_repo_id] = {
             "repo_id": resolved_repo_id,
             "repo_path": str(repo),
-            "commits": [resolved_commit],
+            "commits": existing_commits,
             "active_commit": resolved_commit,
             "artifact_root": self._rel(paths["root"]),
-            "manifest_paths": {resolved_commit: self._rel(manifest_path)},
-            "chunk_manifest_paths": {resolved_commit: self._rel(chunk_path)},
-            "structural_graph_paths": {resolved_commit: self._rel(graph_path)},
-            "created_at": datetime.now(UTC).isoformat(),
+            "manifest_paths": manifest_paths,
+            "chunk_manifest_paths": chunk_manifest_paths,
+            "structural_graph_paths": structural_graph_paths,
+            "created_at": existing_record.get("created_at", datetime.now(UTC).isoformat()),
             "updated_at": datetime.now(UTC).isoformat(),
         }
         self._save_registry(registry)

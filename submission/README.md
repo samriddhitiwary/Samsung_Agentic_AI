@@ -1,5 +1,11 @@
 # Samsung Theme 1 Submission Artifact
 
+## Demo and presentation
+
+- Demo video: https://www.youtube.com/watch?v=dpuXl0uI-rU
+- Presentation / PPT PDF: https://drive.google.com/file/d/1iUm7iALrto8NiXr2GRipvPFWBasBJFvC/view?usp=sharing
+- Submission checklist: `../SUBMISSION_CHECKLIST.md`
+
 Upload the generated MTEB result JSON in the GitHub Release:
 
 - `appsretrieval_results.json`

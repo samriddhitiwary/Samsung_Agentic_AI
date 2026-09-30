@@ -1,246 +1,428 @@
-# Samsung PRISM code retrieval
+# Agentic Code Intelligence  
+### Samsung PRISM Generative AI Hackathon 3.0 · Theme 1
 
-This project targets the strongest legitimate retrieval accuracy on the official CoIR `AppsRetrieval` benchmark for Samsung PRISM Gen AI Hackathon 3.0 Theme 1. The primary screening metrics are **NDCG@10** and **MRR@10**.
+> **CPU-first, version-aware code retrieval for large repositories.**  
+> Ask a natural-language question, retrieve the most relevant code snippets with exact file/line locations, search across Git versions, and inspect how code evolves over time.
 
-## Hands-on Agentic Code Intelligence API and UI
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
+[![MTEB](https://img.shields.io/badge/Evaluation-MTEB-purple)](https://mteb.readthedocs.io/)
+![CPU First](https://img.shields.io/badge/Inference-CPU--First-2563EB)
 
-The repository also includes a CPU-local hands-on demo layer for arbitrary judge queries over Git repositories. This layer does not modify the frozen official AppsRetrieval P0 artifacts.
+---
 
-Capabilities:
+## Demo & Submission Links
 
-- syntax-aware JavaScript/TypeScript structural indexing with Tree-sitter
-- exact `path:start-end` source locations for structural chunks
-- persistent structural graph with symbol, reference, import, and call evidence
-- deterministic query routing: `semantic`, `usage`, `structural`, `mixed`
-- unified `POST /query` endpoint returning snippets, line ranges, timings, and a judge-safe action trace
-- repository registration and incremental update endpoints backed by the existing P1 infrastructure
-- React/Vite/TypeScript/Tailwind frontend focused on arbitrary natural-language queries
+- **Demo video:** [YouTube demo](https://www.youtube.com/watch?v=dpuXl0uI-rU)
+- **Presentation / PPT PDF:** [Google Drive PDF](https://drive.google.com/file/d/1iUm7iALrto8NiXr2GRipvPFWBasBJFvC/view?usp=sharing)
+- **Official AppsRetrieval submission artifact:** [`submission/appsretrieval_results.json`](submission/appsretrieval_results.json)
+- **Submission checklist:** [README submission checklist](#submission-checklist)
 
-Install/update dependencies:
+---
+
+## Overview
+
+**Agentic Code Intelligence** is a retrieval system built for the Samsung PRISM Theme 1 problem statement: given a natural-language query and a large codebase, **rank the most relevant code snippets**.
+
+The system goes beyond a single dense-vector lookup by combining:
+
+- **Jina Code 1.5B Q8 embeddings** for semantic code retrieval
+- **Tree-sitter AST parsing** for JavaScript/TypeScript structure
+- **Call/reference graph evidence** for usage and structural queries
+- **Agentic query routing** across semantic, usage, structural and mixed intents
+- **Exact source locations** (`path:start_line-end_line`)
+- **Content-addressed caches and incremental indexing** across Git versions
+- **Evolutionary retrieval** that groups identical code states across history
+- **CPU-only execution** through `llama.cpp`
+- A **judge-facing React UI** where arbitrary code queries can be entered live
+
+The retrieval pipeline returns **code snippets and locations** rather than generating a long answer, keeping the system aligned with the hackathon's retrieval-first scope.
+
+---
+
+## Samsung Submission Goals
+
+| Goal | Requirement | What this project implements |
+|---|---|---|
+| **P0 — Retrieval Accuracy** | Retrieve the relevant code snippets for a natural-language query | Jina Code 1.5B Q8 retrieval evaluated through the official MTEB `AppsRetrieval` task |
+| **P1 — Retrieval Across Versions** | Support retrieval for different versions and update indexes/caches in reasonable time | Git-aware manifests, content IDs, embedding reuse, incremental vector updates and commit-isolated retrieval |
+| **Bonus — Evolutionary Retrieval** | Search code across versions despite highly similar neighboring states | Semantic-state grouping, evolution chains, predecessor/successor tracking, added/modified/deleted/reintroduced states |
+
+---
+
+## Verified Results
+
+### Official P0 — CoIR `AppsRetrieval`
+
+The final screening result is generated through the official MTEB evaluation flow.
+
+| Metric | Result |
+|---|---:|
+| **NDCG@10** | **0.86950** |
+| **MRR@10** | **0.84141** |
+| HitRate@10 | 95.56% |
+| Recall@100 | 99.10% |
+
+**Evaluation details**
+
+- MTEB task: `AppsRetrieval`
+- Evaluation split: `test`
+- Test queries: **3,765**
+- Corpus candidates: **8,765**
+- Submission artifact: `submission/appsretrieval_results.json`
+
+The official Samsung submission JSON is produced using `task_result.to_dict()` from MTEB.
+
+---
+
+### P1 — Version-Aware Retrieval
+
+Real Git-history validation demonstrated that unchanged code can be reused instead of recomputed after every commit.
+
+| Metric | Result |
+|---|---:|
+| Average embedding reuse | **86.83%** |
+| Embedding work saved | **96.42%** |
+| Measured incremental speedup | **up to 15.54×** |
+| Retrieval parity vs clean rebuild | **PASS** |
+
+> The speedup is a measured benchmark result on the repository used for P1 validation; it is not claimed as a universal speedup for every repository.
+
+---
+
+### Bonus — Evolutionary Retrieval
+
+Internal evolutionary validation compares naive per-commit retrieval with grouped semantic-state retrieval.
+
+| Metric | Raw occurrence search | Evolution-aware search |
+|---|---:|---:|
+| HitRate@1 | 0.1667 | 0.1667 |
+| HitRate@3 | 0.5000 | 0.5000 |
+| HitRate@5 | 0.5000 | **0.6667** |
+| MRR | 0.2778 | **0.3667** |
+| Duplicate top-5 results | 15 | **0** |
+
+> These are **internal validation metrics**, not official Samsung screening metrics.
+
+---
+
+## What Makes the System Different
+
+### 1. Agentic Query Routing
+
+Every query is classified into one of four retrieval modes:
+
+- `semantic`
+- `usage`
+- `structural`
+- `mixed`
+
+The controller then executes only the useful retrieval stages.
+
+```text
+Natural-language query
+        ↓
+Query classification
+        ↓
+Retrieval planning
+        ↓
+Semantic and/or structural search
+        ↓
+Candidate read + refinement
+        ↓
+Deduplication + ranking
+        ↓
+Ranked snippets + exact locations + timings
+```
+
+The UI displays a **judge-safe action trace** such as:
+
+```text
+Classify → Semantic
+Semantic search → 30 candidates
+Read → 8 code regions
+Refine → 12 candidates
+Rank → Top 10 snippets
+```
+
+This is execution metadata only; hidden model reasoning is not exposed.
+
+---
+
+### 2. Hybrid Semantic + Structural Retrieval
+
+The hands-on retrieval layer combines two complementary signals.
+
+**Semantic retrieval**
+
+- Jina Code 1.5B Q8
+- NL-to-code query/passage instructions
+- last-token pooling
+- normalized embeddings
+- exact NumPy dot-product search
+- in-memory embedding cache
+
+**Structural retrieval**
+
+- Tree-sitter JavaScript/TypeScript AST
+- symbols and enclosing symbols
+- imports / exports
+- function calls
+- identifier references
+- persistent call/reference graph
+- static source-order evidence
+
+This allows the same interface to answer very different code-search intents.
+
+```text
+"How is a payload signed?"
+→ semantic retrieval
+
+"Where is openBluetoothSettings used?"
+→ reference / usage retrieval
+
+"Which functions call validate before save?"
+→ structural source-order retrieval
+```
+
+---
+
+### 3. Exact Evidence, Not Just Similarity Scores
+
+Every hands-on result can include:
+
+```text
+rank
+relevance score
+symbol
+symbol type
+relative file path
+start line
+end line
+commit
+code snippet
+evidence type
+query latency
+```
+
+Example:
+
+```text
+#1  createSignature
+src/signer.js:9-12
+Evidence: Semantic
+Score: 0.91
+```
+
+Structural results additionally expose the evidence that caused the match.
+
+---
+
+### 4. Version-Aware Indexing
+
+The P1 pipeline is content-addressed.
+
+```text
+Git repository
+      ↓
+File manifest
+      ↓
+Structural chunks
+      ↓
+content_id
+      ↓
+Embedding cache
+      ↓
+Version-aware vector index
+```
+
+If a code chunk is unchanged between commits, its embedding is reused.
+
+The system tracks:
+
+- added files/chunks
+- modified files/chunks
+- deleted files/chunks
+- unchanged content
+- commit-specific active occurrences
+- reusable content-addressed vectors
+
+This avoids blindly rebuilding the entire retrieval index after every commit.
+
+---
+
+### 5. Evolutionary Retrieval
+
+Searching every commit independently creates duplicate results because unchanged functions may appear in many commits.
+
+This project groups equivalent versions by `content_id`.
+
+```text
+State A
+  commits: A, B, C
+        ↓ modified
+State B
+  commits: D, E
+        ↓ deleted
+State C
+  reintroduced at commit F
+```
+
+Evolution results may include:
+
+- first-seen commit
+- last-seen commit
+- occurrence commits
+- predecessor state
+- successor state
+- lines added
+- lines removed
+- semantic score
+
+---
+
+## Supported Hands-On Queries
+
+The judge-facing UI accepts arbitrary natural-language **code retrieval** queries against an indexed repository.
+
+### Semantic
+
+```text
+How is the input transformed before it is sent to the API?
+```
+
+### Usage / Reference
+
+```text
+Where is openBluetoothSettings used?
+```
+
+### Structural
+
+```text
+Which functions call validate before save?
+```
+
+Structural call order is reported as **static source-order evidence**, not guaranteed runtime execution order.
+
+### Mixed
+
+```text
+Where is the SHA1 signer used before serialization?
+```
+
+### Across Versions
+
+Run the same query against different commits and compare the ranked snippets.
+
+### Across History
+
+Search distinct semantic states of code across repository history.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    Q["Natural-Language Query"] --> R{"Intent Router"}
+
+    R -->|Semantic| S["Semantic Retrieval<br/>Jina Code 1.5B Q8"]
+    R -->|Usage| G["Reference / Call Graph"]
+    R -->|Structural| G
+    R -->|Mixed| S
+    R -->|Mixed| G
+
+    S --> F["Evidence Fusion + Refinement"]
+    G --> F
+    F --> O["Ranked Snippets<br/>path + exact lines + score + latency"]
+
+    subgraph Indexing["Repository Indexing"]
+        REPO["Git Repository"] --> AST["Tree-sitter JS / TS Parsing"]
+        AST --> CH["Structural Chunks + content_id"]
+        CH --> EC["Embedding Cache"]
+        EC --> VI["Version-Aware Vector Index"]
+        AST --> SG["Structural Call / Reference Graph"]
+    end
+
+    VI --> S
+    SG --> G
+
+    VI --> EV["Evolutionary Retrieval"]
+    SG --> EV
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Code embeddings | Jina Code 1.5B Q8 GGUF |
+| Embedding runtime | `llama.cpp` |
+| Benchmark framework | MTEB |
+| Structural parsing | Tree-sitter |
+| Vector search | NumPy exact dot product |
+| API | FastAPI + Pydantic + Uvicorn |
+| Versioning | Git + deterministic manifests/content IDs |
+| Persistent metadata | JSON / NumPy artifacts |
+| Frontend | React + Vite + TypeScript + Tailwind CSS |
+| Primary hands-on structural languages | JavaScript / JSX / TypeScript / TSX |
+| Compute target | CPU-first |
+
+---
+
+# Quick Start
+
+## 1. Clone
+
+```powershell
+git clone https://github.com/samriddhitiwary/Samsung_Agentic_AI.git
+cd Samsung_Agentic_AI
+```
+
+## 2. Python environment
+
+Python **3.11** is recommended.
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-Start the backend:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
-```
-
-Register a local Git repository:
-
-```powershell
-Invoke-RestMethod -Uri http://127.0.0.1:8000/repos/register `
-  -Method Post `
-  -ContentType 'application/json' `
-  -Body '{"repo_path":"C:\\path\\to\\repo","repo_id":"sample_repo","commit":"HEAD"}'
-```
-
-Query arbitrary code:
-
-```powershell
-Invoke-RestMethod -Uri http://127.0.0.1:8000/query `
-  -Method Post `
-  -ContentType 'application/json' `
-  -Body '{"repo_id":"sample_repo","query":"Where is openBluetoothSettings used?","top_k":10}'
-```
-
-Start the frontend:
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:5173`.
-
-Optional helper:
-
-```powershell
-.\scripts\start_demo.ps1
-```
-
-Run internal JavaScript hands-on validation:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\validate_hands_on_js.py
-```
-
-This creates a temporary engineering smoke-test repository under `data/api/js_smoke_repo` and writes internal metrics to `data/api/js_hands_on_validation.json`. These are not official Samsung P0 metrics.
-
-Samsung sample repository note: no official sample JavaScript repository or problem-statement sample repo is currently available locally in this workspace. The validation repo is therefore clearly labeled as a temporary engineering smoke test.
-
-Optional demo warm-up, clearly separate from evaluation:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\warmup_demo.py --repo-id js_hands_on_smoke
-```
-
-Generic hands-on latency/quality benchmark for a future Samsung sample repository:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\benchmark_hands_on_repo.py `
-  --repo-path C:\path\to\samsung-sample-js-repo `
-  --repo-id samsung_sample `
-  --commit HEAD `
-  --queries-file C:\path\to\source_verified_queries.json `
-  --output data\api\samsung_sample_hands_on_latency.json
-```
-
-Query-set JSON format:
-
-```json
-[
-  {
-    "query": "Where is openBluetoothSettings used?",
-    "type": "usage",
-    "expected": [
-      {
-        "path": "src/settings.js",
-        "symbol": "openBluetoothSettings",
-        "start_line": 3,
-        "end_line": 5
-      }
-    ]
-  }
-]
-```
-
-Expected answers must be manually/source verified. The benchmark script never invents expected answers.
-
-## Reproducible benchmark definition
-
-- Python: 3.11 (environment created with 3.11.9)
-- MTEB: 2.21.0
-- Hugging Face `datasets`: 5.0.1
-- NumPy: 2.4.6
-- tqdm: 4.70.1
-- bm25s: 0.2.13
-- Sentence Transformers: 5.1.2
-- Transformers: 4.57.1
-- protobuf: 6.33.2
-- PyTorch (MTEB dependency): 2.14.0+cpu
-- Official task name/type: `AppsRetrieval` / `Retrieval`
-- Hugging Face dataset: `CoIR-Retrieval/apps`
-- Dataset revision pinned by MTEB: `f22508f96b7a36c2415181ed8bb76f76e04ae2d5`
-- MTEB evaluation split: `test`
-- Evaluation languages/modalities: `eng-Latn`, `python-Code`
-- Main score: `ndcg_at_10`
-
-The official MTEB view contains 8,765 corpus documents (5,000 marked `train`, 3,765 marked `test`), 3,765 test queries, and 3,765 binary qrel pairs - one positive document per test query. The sole MTEB evaluation split is `test`; the train-partition documents are corpus candidates, not evaluation queries.
-
-MTEB 2.21.0 declares PyTorch and Sentence Transformers as dependencies even when only loading a task. No model weights, index library, or retrieval implementation is installed by this project.
-
-## Windows PowerShell setup
-
-From the `samsung-code-retrieval` directory:
-
-```powershell
-# Select any installed Python 3.11 interpreter. This machine uses pyenv-win:
-pyenv local 3.11.9
-
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If PowerShell execution policy prevents activation, invoke the environment's interpreter directly:
+If PowerShell activation is restricted, use the virtual environment interpreter directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe scripts\inspect_benchmark.py
 ```
 
-Run the benchmark inspection after activation with:
+---
+
+## 3. Configure llama.cpp
+
+The retrieval model is served locally using `llama-server`.
+
+Set the executable path:
 
 ```powershell
-python scripts\inspect_benchmark.py
+$env:JCR_LLAMA_CPP_EXECUTABLE = "C:\path\to\llama-server.exe"
 ```
 
-The first run downloads the exact official dataset revision into the Hugging Face cache. It loads and samples metadata only; it does not run retrieval or evaluation.
+Expected model:
 
-## Evaluation interface verified in MTEB 2.21.0
-
-An MTEB `SearchProtocol.search` implementation receives the official query dataset and `top_k=1000`, and returns:
-
-```python
-{
-    "q5001": {"d5001": 12.34, "d1234": 10.25},
-    # one inner ranking dictionary per evaluation query
-}
+```text
+data/cache/model_files/jina-code-embeddings-1.5b-Q8_0.gguf
 ```
 
-- Query keys must be exact string IDs from `queries["id"]` (`q...`).
-- Inner keys must be exact string IDs from `corpus["id"]` (`d...`).
-- Values are numeric relevance scores; larger scores rank earlier.
-- Results should cover every evaluation query and contain up to the requested 1,000 documents per query. Only the first *k* ranks affect a metric at cutoff *k*.
-- If predictions are saved through MTEB, `AppsRetrieval_predictions.json` wraps that ranking as `{"mteb_model_meta": {...}, "default": {"test": <ranking>}}`.
-
-The official cutoff set is `1, 3, 5, 10, 20, 100, 1000`. MTEB exposes NDCG, MAP, recall, precision, MRR, hit rate, and normalized-AUC variants at these cutoffs. Therefore both NDCG@10 and MRR@10 are directly supported in this installed version.
-
-NDCG@10 is computed by `pytrec_eval` as `ndcg_cut_10` and averaged across queries. MRR@10 is computed by MTEB: for each query, the first document with qrel greater than zero in the top 10 contributes `1 / rank`, or zero if none is present, then values are averaged. Score ties in MRR are resolved by descending document ID to match `pytrec_eval`. AppsRetrieval's test data has one binary-positive qrel per query, so these definitions reduce respectively to discounted gain and reciprocal rank of that one positive document when it appears in the top 10.
-
-## Baseline milestone
-
-Task 2 adds a reusable MTEB-compatible evaluator plus two top-100 retrieval baselines. Retrieval code receives only queries and corpus; qrels are used only after predictions are produced.
-
-Run both baselines with:
+Start the embedding server:
 
 ```powershell
-python scripts\run_baselines.py
-```
-
-The dense default is `sentence-transformers/all-MiniLM-L6-v2` with normalized cosine similarity and `max_seq_length=128` by default to keep the full benchmark practical on this CPU-only machine:
-
-```powershell
-python scripts\run_baselines.py --skip-bm25 --dense-model sentence-transformers/all-MiniLM-L6-v2 --dense-corpus-batch-size 64 --dense-query-batch-size 128 --dense-max-seq-length 128
-```
-
-The BM25 run uses `bm25s` with Lucene-style BM25 defaults (`k1=1.5`, `b=0.75`) and `code_split` tokenization, which preserves code tokens and also splits snake_case/camelCase identifier parts.
-
-Initial code-specialized dense candidates were inspected first. `jinaai/jina-embeddings-v2-base-code` is a better fit conceptually for text-to-code retrieval, but it required Jina remote model code incompatible with the originally installed Transformers 5.x and remained impractical on this CPU-only machine even after pinning Transformers 4.x and truncating sequence length. `flax-sentence-embeddings/st-codesearch-distilroberta-base` and `microsoft/codebert-base` were also attempted, but local Hugging Face model load/download did not complete reliably during this milestone. The MiniLM dense result is therefore an operational dense pipeline baseline, not the final model choice for maximizing score.
-
-Current saved results:
-
-| Method | NDCG@10 | MRR@10 | Recall@10 | HitRate@10 |
-| --- | ---: | ---: | ---: | ---: |
-| BM25 `code_split` | 0.00826 | 0.00686 | 0.01301 | 0.01301 |
-| Dense `sentence-transformers/all-MiniLM-L6-v2`, max_seq=128 | 0.05158 | 0.04291 | 0.08021 | 0.08021 |
-
-Additional cutoffs:
-
-| Method | NDCG@1 | NDCG@3 | NDCG@5 | MRR@1 | MRR@3 | MRR@5 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| BM25 `code_split` | 0.00531 | 0.00591 | 0.00680 | 0.00531 | 0.00575 | 0.00626 |
-| Dense MiniLM | 0.03028 | 0.03920 | 0.04436 | 0.03028 | 0.03705 | 0.03992 |
-
-Artifacts:
-
-- `results/bm25_code_split/metrics.json`
-- `results/bm25_code_split/top100.json`
-- `results/dense_sentence-transformers_all-MiniLM-L6-v2/metrics.json`
-- `results/dense_sentence-transformers_all-MiniLM-L6-v2/top100.json`
-- `data/cache/sentence-transformers_all-MiniLM-L6-v2_maxseq-128_*.npz`
-
-Evaluator sanity checks passed for both baselines:
-
-- exactly one positive qrel per query
-- MRR@10 equals average reciprocal rank of the positive document within top 10
-- HitRate@10 equals the fraction of queries whose positive document appears in the top 10
-
-## Run API
-
-Start the existing local Jina Code 1.5B GGUF embedding server first:
-
-```powershell
-& 'C:\Users\samri\AppData\Local\Microsoft\WinGet\Packages\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\llama-server.exe' `
+& $env:JCR_LLAMA_CPP_EXECUTABLE `
   --embedding `
-  --model 'data\cache\model_files\jina-code-embeddings-1.5b-Q8_0.gguf' `
+  --model data\cache\model_files\jina-code-embeddings-1.5b-Q8_0.gguf `
   --host 127.0.0.1 `
   --port 8081 `
   --ctx-size 2048 `
@@ -252,135 +434,366 @@ Start the existing local Jina Code 1.5B GGUF embedding server first:
   --no-op-offload
 ```
 
-Run the local FastAPI app:
+Health endpoint:
+
+```text
+http://127.0.0.1:8081/health
+```
+
+---
+
+## 4. Start the API
+
+Open a second terminal:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-Health check:
+Check:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-## Register repository
+API:
+
+```text
+http://127.0.0.1:8000
+```
+
+---
+
+## 5. Start the frontend
+
+Open a third terminal:
 
 ```powershell
-$body = @{
-  repo_path = "data/versioning/real_repos/itsdangerous"
-  repo_id = "itsdangerous_demo"
-  commit = "2f69e841d2a979c616a55b226e444694f5d9c962"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/register -ContentType "application/json" -Body $body
+cd frontend
+npm install
+npm run dev
 ```
 
-## Search commit
+Open:
 
-```powershell
-$body = @{
-  repo_id = "itsdangerous_demo"
-  query = "FIPS SHA1 digest method"
-  commit = "2f69e841d2a979c616a55b226e444694f5d9c962"
-  top_k = 5
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/search -ContentType "application/json" -Body $body
+```text
+http://127.0.0.1:5173
 ```
 
-## Incrementally update
+The main screen is the actual retrieval console.
 
-```powershell
-$body = @{
-  commit = "31f46a3469dbfb2ecf83dd0c4297c1efc508fcca"
-} | ConvertTo-Json
+A judge can select an indexed repository/version, enter an arbitrary code query and inspect the returned snippets, exact locations, evidence and runtime.
 
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/repos/itsdangerous_demo/update -ContentType "application/json" -Body $body
-```
+---
 
-## Search across history
+# Index a Repository
+
+Repositories can be registered from the frontend or directly through the API.
 
 ```powershell
 $body = @{
-  repo_id = "itsdangerous_demo"
-  query = "serializer signing"
-  top_k = 5
+    repo_path = "C:\path\to\javascript-repository"
+    repo_id   = "sample_repo"
+    commit    = "HEAD"
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/search/evolution -ContentType "application/json" -Body $body
+Invoke-RestMethod `
+    -Uri http://127.0.0.1:8000/repos/register `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-## View metrics
+Registration reports information such as:
+
+- source files
+- symbols
+- chunks
+- call edges
+- reference edges
+- embedding reuse / generation
+- indexing runtime
+
+---
+
+# Run an Arbitrary Query
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/metrics/summary
+$body = @{
+    repo_id = "sample_repo"
+    query   = "Where is openBluetoothSettings used?"
+    top_k   = 10
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri http://127.0.0.1:8000/query `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-## Demo CLI
+The response contains:
 
-The CLI demonstrates registration, version-specific search, incremental update, evolutionary search, and symbol evolution:
+- query type
+- execution trace
+- real timing fields
+- ranked snippets
+- exact path and line ranges
+- evidence type
+
+---
+
+# P1 — Update to Another Commit
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\demo_system.py --seed-cache
+$body = @{
+    commit = "<TARGET_COMMIT>"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri http://127.0.0.1:8000/repos/sample_repo/update `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-API verification without a browser:
+The update response reports changed files, chunk reuse, embeddings reused/generated and update runtime.
+
+After the update, queries can immediately be run against the newly indexed commit.
+
+---
+
+# Bonus — Search Across History
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\verify_api.py
+$body = @{
+    repo_id = "sample_repo"
+    query   = "serializer signing"
+    top_k   = 5
+    include_evolution_context = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri http://127.0.0.1:8000/search/evolution `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-## Samsung P0 Submission
+Evolutionary retrieval returns distinct code states instead of repeating unchanged code from every commit.
 
-The frozen P0 AppsRetrieval result is submitted through Samsung's required MTEB flow:
+---
 
-- task: `AppsRetrieval`
-- evaluation split: `test`
-- wrapper interface: `mteb.models.abs_encoder.AbsEncoder`
-- output file: `submission/appsretrieval_results.json`
+# API Summary
 
-Generate the official MTEB JSON:
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Service/model/index health |
+| `POST` | `/repos/register` | Index a local Git repository |
+| `POST` | `/repos/{repo_id}/update` | Incrementally update to another commit |
+| `POST` | `/query` | Unified arbitrary-query retrieval |
+| `POST` | `/search` | Version-specific semantic search |
+| `POST` | `/search/evolution` | Search semantic states across history |
+| `GET` | `/repos/{repo_id}/symbols/evolution` | Inspect symbol evolution |
+| `GET` | `/metrics/summary` | Load frozen P0/P1/Bonus evidence |
+
+---
+
+# Official Samsung P0 Submission
+
+The official Samsung screening artifact is generated using the required MTEB flow.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_samsung_mteb_submission.py --require-cache
 ```
 
-The runner uses:
+The runner executes:
 
 ```python
 task = mteb.get_task("AppsRetrieval")
-result = mteb.evaluate(model, [task], encode_kwargs={"batch_size": 4})
+
+result = mteb.evaluate(
+    model,
+    [task],
+    encode_kwargs={"batch_size": 4},
+)
+
 task_result = list(result.task_results)[0]
-json.dump(task_result.to_dict(), f, indent=2)
 ```
 
-If the frozen embedding caches are unavailable and you want to regenerate embeddings, start the local llama.cpp embedding server first:
+Output:
+
+```text
+submission/appsretrieval_results.json
+```
+
+Expected frozen metrics:
+
+```text
+NDCG@10 = 0.86950
+MRR@10  = 0.8414101267
+```
+
+For submission, attach `appsretrieval_results.json` to the GitHub Release.
+
+---
+
+## Validation
+
+### Compile
 
 ```powershell
-& $env:JCR_LLAMA_CPP_EXECUTABLE --embedding --model data\cache\model_files\jina-code-embeddings-1.5b-Q8_0.gguf --host 127.0.0.1 --port 8081 --ctx-size 2048 --ubatch-size 512 --pooling last --parallel 1 --device none --gpu-layers 0 --no-op-offload
+python -m compileall src scripts
 ```
 
-Expected local behavior with completed caches:
+### API integration
 
-- processes all 3,765 test queries and 8,765 official corpus candidates
-- reuses `data/cache/jina_code_1.5b_full_1024/`
-- finishes in minutes for evaluation/search because embeddings are cached
-- writes `submission/appsretrieval_results.json`
-- writes `submission/appsretrieval_validation.json` for local sanity checks
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_api.py
+```
 
-GitHub Release file list:
+### Hands-on JavaScript validation
 
-- `appsretrieval_results.json`
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_hands_on_js.py
+```
 
-CSV note: Official guideline provides explicit MTEB JSON generation/upload instructions but does not provide an explicit CSV schema.
+### Optional warm-up before demo
 
-Hands-on evaluation checklist:
+```powershell
+.\.venv\Scripts\python.exe scripts\warmup_demo.py --repo-id <REGISTERED_REPO_ID>
+```
 
-- PPT
-- demo video
-- GitHub repository
-- runnable instructions
-- real query responses
-- runtime/speed demonstration
-- P1 / Bonus version-aware retrieval demonstration
+Warm-up loads runtime state; it does **not** preload final answers.
+
+### Frontend production build
+
+```powershell
+cd frontend
+npm install
+npm run build
+```
+
+---
+
+## Repository Structure
+
+```text
+Samsung_Agentic_AI/
+│
+├── configs/                   # Runtime/model configuration
+├── data/
+│   ├── api/                   # Hands-on validation/performance reports
+│   ├── cache/                 # Embedding/model caches
+│   └── versioning/            # Version manifests, indexes and P1 reports
+│
+├── docs/                      # Architecture and project documentation
+├── frontend/                  # React judge-facing retrieval console
+├── results/                   # Frozen retrieval benchmark results
+├── scripts/
+│   ├── run_samsung_mteb_submission.py
+│   ├── verify_api.py
+│   ├── demo_system.py
+│   ├── validate_hands_on_js.py
+│   ├── benchmark_hands_on_repo.py
+│   └── warmup_demo.py
+│
+├── src/
+│   ├── agentic/               # Query routing + retrieval controller
+│   ├── api/                   # FastAPI service
+│   ├── retrieval/             # P0 retrieval implementations
+│   ├── structure/             # Tree-sitter + structural graph
+│   └── versioning/            # P1 and evolutionary retrieval
+│
+├── submission/
+│   └── appsretrieval_results.json
+│
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Performance Notes
+
+The system is intentionally **CPU-first**.
+
+The largest recurring cost for unseen semantic queries is generating the query embedding with Jina Code 1.5B Q8. To keep interactive retrieval responsive, the hands-on path uses:
+
+- persistent HTTP connections
+- in-memory bounded query-embedding cache
+- in-memory vector/graph state
+- structural fast paths for exact reference/call queries
+- candidate deduplication
+- incremental content-addressed caches
+
+Usage and structural queries can skip semantic embedding when deterministic structural evidence is already sufficient.
+
+---
+
+## Scope and Limitations
+
+- Official P0 scoring is based on **CoIR `AppsRetrieval`**; internal hands-on metrics are kept separate.
+- JavaScript/TypeScript structural reasoning is based on static parsing and graph evidence.
+- Call order currently represents **static source order**, not guaranteed runtime execution order.
+- Dynamic JavaScript behavior may prevent exact static symbol resolution in some cases.
+- The official Samsung sample JavaScript repository was not available locally during development; internal hands-on repositories are therefore clearly identified as engineering validation data.
+- No generated natural-language answer is required for the core retrieval workflow: results are ranked code snippets and locations.
+- Optimization suggestions are intentionally not part of the core retrieval ranking path.
+
+---
+
+## Submission Checklist
+
+- [x] Working prototype
+- [x] Public GitHub repository
+- [x] Reproducible setup instructions
+- [x] Official `AppsRetrieval` MTEB evaluation
+- [x] `submission/appsretrieval_results.json`
+- [x] P1 retrieval across versions
+- [x] Bonus evolutionary retrieval
+- [x] Judge-facing arbitrary-query frontend
+- [x] CPU-local inference
+- [x] Demo video link added to README
+- [x] Final PPT/PDF link added to README
+- [x] Hands-on demo workflow documented
+- [x] Frozen P0/P1/Bonus artifacts preserved
+- [x] Final GitHub repository link documented
+- [ ] Final GitHub Release attachment, if required by the submission portal
+
+---
+
+## Demo Video and Presentation
+
+- **Demo video:** [YouTube demo](https://www.youtube.com/watch?v=dpuXl0uI-rU)
+- **Presentation / PPT PDF:** [Google Drive PDF](https://drive.google.com/file/d/1iUm7iALrto8NiXr2GRipvPFWBasBJFvC/view?usp=sharing)
+
+The demo is intended to show:
+
+1. an arbitrary judge-entered query,
+2. ranked snippets with exact file/line locations,
+3. real retrieval latency,
+4. a usage or structural query,
+5. version-aware update/search,
+6. evolutionary retrieval across history.
+
+---
+
+## Team
+
+**Samsung PRISM Generative AI Hackathon — Theme 1: Agentic Code Intelligence**
+
+**Samriddhi Tiwary**  
+VIT Vellore  
+Email: `samriddhi.tiwary2023@vitstudent.ac.in`
+
+Repository:  
+`https://github.com/samriddhitiwary/Samsung_Agentic_AI`
+
+---
+
+## Acknowledgement
+
+Built for the **Samsung PRISM Generative AI Hackathon 3rd Edition — Theme 1: Agentic Code Intelligence**.
+
+The project is intentionally focused on **retrieval quality, version-aware indexing, evolutionary search, reproducibility and CPU-efficient execution**.
