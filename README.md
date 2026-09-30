@@ -16,6 +16,7 @@
 
 - **Demo video:** [YouTube demo](https://www.youtube.com/watch?v=dpuXl0uI-rU)
 - **Presentation / PPT PDF:** [Google Drive PDF](https://drive.google.com/file/d/1iUm7iALrto8NiXr2GRipvPFWBasBJFvC/view?usp=sharing)
+- **AI disclosure:** [Google Drive PDF](https://drive.google.com/file/d/1CW_iBtsZWd8QcF4dNF94iTeOWg7bKb7_/view?usp=sharing)
 - **Official AppsRetrieval submission artifact:** [`submission/appsretrieval_results.json`](submission/appsretrieval_results.json)
 - **Submission checklist:** [README submission checklist](#submission-checklist)
 
